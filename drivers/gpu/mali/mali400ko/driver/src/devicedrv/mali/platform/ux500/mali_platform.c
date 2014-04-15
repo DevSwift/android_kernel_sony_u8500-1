@@ -43,17 +43,7 @@
 #define MALI_HIGH_TO_LOW_LEVEL_UTILIZATION_LIMIT 64
 #define MALI_LOW_TO_HIGH_LEVEL_UTILIZATION_LIMIT 192
 
-
-#define ATTR_RO(_name)	\
-	static struct kobj_attribute _name##_interface = __ATTR(_name, 0444, _name##_show, NULL);
-
-#define ATTR_WO(_name)	\
-	static struct kobj_attribute _name##_interface = __ATTR(_name, 0220, NULL, _name##_store);
-
-#define ATTR_RW(_name)	\
-	static struct kobj_attribute _name##_interface = __ATTR(_name, 0644, _name##_show, _name##_store);
-
-#define MALI_UX500_VERSION		"1.0.0"
+#define MALI_UX500_VERSION		"1.0.1"
 
 #define MALI_MAX_UTILIZATION		256
  
@@ -69,6 +59,9 @@
 #define AB8500_VAPE_MIN_UV		700000
 #define AB8500_VAPE_MAX_UV		1362500
 
+#define MALI_CLOCK_DEFLO		399360
+#define MALI_CLOCK_DEFHI		480000
+
 struct mali_dvfs_data
 {
 	u32 	freq;
@@ -77,6 +70,7 @@ struct mali_dvfs_data
 };
 
 static struct mali_dvfs_data mali_dvfs[] = {
+	{192000, 0x0101010A, 0x26},
 	{256000, 0x01030128, 0x26},
 	{299520, 0x0105014E, 0x26},
 	{320000, 0x01030132, 0x26},
@@ -125,8 +119,8 @@ static u32 boost_enable 	= 1;
 static u32 boost_working 	= 0;
 static u32 boost_required 	= 0;
 static u32 boost_delay 		= 500;
-static u32 boost_low 		= 4;
-static u32 boost_high 		= 8;
+static u32 boost_low 		= 0;
+static u32 boost_high 		= 0;
 static u32 boost_utilization 	= 0;
 static u32 boost_upthreshold 	= 233;
 static u32 boost_downthreshold 	= 64;
@@ -171,6 +165,29 @@ static int sgaclk_freq(void)
 		return 0;
 	
 	return (pllsoc0_freq(soc0pll) / (sgaclk & 0xf));
+}
+
+static void mali_boost_init(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(mali_dvfs); i++) {
+		if (mali_dvfs[i].freq == MALI_CLOCK_DEFLO) {
+			boost_low = i;
+			break;
+		}
+	}
+
+	for (i = 0; i < ARRAY_SIZE(mali_dvfs); i++) {
+		if (mali_dvfs[i].freq == MALI_CLOCK_DEFHI) {
+			boost_high = i;
+			break;
+		}
+	}
+
+	pr_info("[Mali] Booster: %u kHz - %u kHz\n", 
+			mali_dvfs[boost_low].freq, 
+			mali_dvfs[boost_high].freq);
 }
 
 static void mali_boost_update(void)
@@ -350,6 +367,15 @@ void mali_utilization_function(struct work_struct *ptr)
 
 	MALI_DEBUG_PRINT(5, ("MALI GPU utilization: %u\n", mali_last_utilization));
 }
+
+#define ATTR_RO(_name)	\
+	static struct kobj_attribute _name##_interface = __ATTR(_name, 0444, _name##_show, NULL);
+
+#define ATTR_WO(_name)	\
+	static struct kobj_attribute _name##_interface = __ATTR(_name, 0220, NULL, _name##_store);
+
+#define ATTR_RW(_name)	\
+	static struct kobj_attribute _name##_interface = __ATTR(_name, 0644, _name##_show, _name##_store);
 
 static ssize_t version_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -664,6 +690,8 @@ _mali_osk_errcode_t mali_platform_init()
 	mali_last_utilization = 0;
 
 	if (!is_initialized) {
+	
+		mali_boost_init();
 
 		mali_utilization_workqueue = create_singlethread_workqueue("mali_utilization_workqueue");
 		if (NULL == mali_utilization_workqueue) {
